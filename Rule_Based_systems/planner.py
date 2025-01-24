@@ -65,6 +65,12 @@ class Proceso_productivo:
     def get_insumos(self, bien):
         return self._insumos_directos[bien]
 
+    def get_clasificacion_bienes(self):
+        return self._clasificacion_bienes
+
+    def get_cantidades_requeridas(self):
+        return self.cantidades_requeridas
+
     def get_grafo(self):
         """
         Devuelve el grafo de producción que se utiliza en el Proceso_productivo.
@@ -152,11 +158,13 @@ def cortar_lista(
 class Planner:
     def __init__(self, proceso_productivo):
         self._proceso_productivo = proceso_productivo
-        self.cantidades_requeridas = self._proceso_productivo.cantidades_requeridas
-        self.clasificacion_bienes = self._proceso_productivo._clasificacion_bienes
+        self.cantidades_requeridas = (
+            self._proceso_productivo.get_cantidades_requeridas()
+        )
+        self.clasificacion_bienes = self._proceso_productivo.get_clasificacion_bienes()
+
         # Inicializar al mercado con los bienes primarios
         self._mercado = Agente("MKT", {})
-
         for bien, cantidad in self.cantidades_requeridas.items():
             if self.clasificacion_bienes[bien] == "bien_primario":
                 for i in range(1, cantidad + 1):
@@ -172,6 +180,9 @@ class Planner:
         # Inicializar la secuencia de transacciones
         self.transacciones = []
 
+    def crear_plan_produccion(self, plan: List[int]):
+        return self._proceso_productivo.crear_plan_produccion(plan)
+
     def reset(self):
         """
         Reinicia el estado del Planner, eliminando todos los bienes comprados /
@@ -180,28 +191,27 @@ class Planner:
         """
         self.__init__(self._proceso_productivo)
 
-    def procesar_compra(self, orden: Tuple[str, str, str]):
+    def procesar_compra(
+        self, orden: Tuple[str, str, str], inicial: bool = False, paso: int = 0
+    ):  # <-- Cambio
         """
         Procesa una orden de compra en la forma (Bien, "comprar", Agente).
-        Busca un vendedor que tenga el bien en su inventario y transfiere
-        la primera unidad disponible al agente comprador.
-
-        Args:
-            orden (Tuple[str, str, str]): Tupla en la forma (bien, accion, agente).
-
-        Raises:
-            ValueError: Si la acción no es "comprar" o si ningún agente tiene
-                        el bien disponible para vender.
         """
         bien, accion, agente = orden
 
         if accion != "comprar":
             raise ValueError("La orden debe ser de tipo 'comprar'.")
 
-        # Buscar en todos los agentes quién tiene el bien disponible
+        # Filtrar los agentes (vendedores) según sea compra inicial o no
+        if inicial:
+            posibles_vendedores = {k: v for k, v in self._agentes.items() if k == "MKT"}
+        else:
+            posibles_vendedores = {
+                k: v for k, v in self._agentes.items() if k != agente
+            }
+
+        # Buscar un vendedor que tenga el bien disponible
         vendedor_encontrado = None
-        # Filtrar los agentes excluyendo la clave específica
-        posibles_vendedores = {k: v for k, v in self._agentes.items() if k != agente}
         for nombre_agente, objeto_agente in posibles_vendedores.items():
             if bien in objeto_agente._inventario and objeto_agente._inventario[bien]:
                 vendedor_encontrado = nombre_agente
@@ -213,32 +223,18 @@ class Planner:
             self._agentes[vendedor_encontrado].eliminar_inventario(bien, unidad)
             self._agentes[agente].agregar_inventario(bien, unidad)
 
-            # Registrar la transacción en formato ((comprador,vendedor), "compra", bien)
+            # Registrar la transacción: (paso, (comprador, vendedor), "compra", bien)  # <-- Cambio
             self.transacciones.append(
-                (
-                    (
-                        agente,
-                        vendedor_encontrado,
-                    ),
-                    "compra",
-                    bien,
-                )
+                (paso, (agente, vendedor_encontrado), "compra", bien)
             )
         else:
             raise ValueError(f"Ningún agente tiene '{bien}' disponible para vender.")
 
-    def procesar_produccion(self, orden: Tuple[str, str, str]):
+    def procesar_produccion(
+        self, orden: Tuple[str, str, str], paso: int = 0
+    ):  # <-- Cambio
         """
         Procesa una orden de producción en la forma (Bien, "producir", Agente).
-        Antes de producir, valida que el agente tenga todos los insumos requeridos.
-        Si no los tiene, intenta comprarlos de manera recursiva llamando a
-        'procesar_orden' para cada insumo faltante.
-
-        Args:
-            orden (Tuple[str, str, str]): Tupla en la forma (bien, accion, agente).
-
-        Raises:
-            ValueError: Si la acción no es "producir".
         """
         bien, accion, agente = orden
 
@@ -250,15 +246,14 @@ class Planner:
 
         # Verificar y/o comprar insumos antes de producir
         for insumo in insumos_necesarios:
-            # Si el agente no tiene el insumo en su inventario (o no tiene unidades),
-            # procedemos a hacer la compra de manera recursiva.
             if (
                 insumo not in self._agentes[agente]._inventario
                 or not self._agentes[agente]._inventario[insumo]
             ):
-                self.procesar_orden((insumo, "comprar", agente))
+                # Si no tiene el insumo, se intenta comprar (recursivamente)
+                self.procesar_orden((insumo, "comprar", agente), paso=paso)
 
-        # Una vez que tiene los insumos, se agrega el bien producido al inventario
+        # Agregar el bien producido al inventario
         self._agentes[agente].agregar_inventario(bien, f"unidad_{bien}")
 
         # Consumir (eliminar) una unidad de cada insumo
@@ -266,47 +261,49 @@ class Planner:
             unidad_insumo = self._agentes[agente]._inventario[insumo][0]
             self._agentes[agente].eliminar_inventario(insumo, unidad_insumo)
 
-        # Registrar la transacción de producción
-        # Estructura de ejemplo: ((agente, ), "producción", bien)
-        # o algún formato que te resulte conveniente.
-        self.transacciones.append(((agente,), "producción", bien))
+        # Registrar la transacción: (paso, (agente,), "produccion", bien)  # <-- Cambio
+        self.transacciones.append((paso, (agente,), "produccion", bien))
 
-    def procesar_orden(self, orden: Tuple[str, str, str]):
+    def procesar_orden(
+        self, orden: Tuple[str, str, str], inicial: bool = False, paso: int = 0
+    ):  # <-- Cambio
         """
         Dado un orden en la forma (bien, accion, agente), delega el procesamiento
-        a 'procesar_compra' o 'procesar_produccion' según corresponda.
-
-        Args:
-            orden (Tuple[str, str, str]): Tupla en la forma (bien, accion, agente).
-
-        Raises:
-            ValueError: Si la acción no es reconocida.
+        a 'procesar_compra' o 'procesar_produccion'.
         """
         bien, accion, agente = orden
-
         if accion == "comprar":
-            self.procesar_compra(orden)
+            self.procesar_compra(orden, inicial, paso=paso)  # <-- Cambio
         elif accion == "producir":
-            self.procesar_produccion(orden)
+            self.procesar_produccion(orden, paso=paso)  # <-- Cambio
         else:
             raise ValueError(f"Acción no reconocida: {accion}")
 
     def ejecutar_plan(self, plan: List[Tuple[str, str, str]]):
         """
         Ejecuta un plan de producción procesando cada orden.
-
-        Args:
-            plan_produccion (List[Tuple[str, str, str]]): Lista de órdenes.
+        Retorna la lista de transacciones con el paso en que ocurrieron.
         """
-        Planner.reset(self)
+        self.reset()
+
+        # Crear el plan completo
         plan_produccion = self._proceso_productivo.crear_plan_produccion(plan)
+
+        # Separar secuencias de compra inicial vs. resto
         parte_1_secuencia = cortar_lista(plan_produccion, "comprar", 1)
         parte_2_secuencia = cortar_lista(plan_produccion, "comprar", 0)
 
-        for orden in parte_1_secuencia:
-            self.procesar_orden(orden)
+        # Contador de paso  # <-- Cambio
+        paso = 1
 
+        # Procesar la parte de compras iniciales con su paso
+        for orden in parte_1_secuencia:
+            self.procesar_orden(orden, inicial=True, paso=paso)
+            paso += 1
+
+        # Procesar la parte restante
         for orden in parte_2_secuencia:
-            self.procesar_orden(orden)
+            self.procesar_orden(orden, inicial=False, paso=paso)
+            paso += 1
 
         return self.transacciones
