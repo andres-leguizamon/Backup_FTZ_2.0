@@ -36,7 +36,7 @@ class Agente:
             print(f"El agente {self._id} no tiene el bien {bien}")
 
 
-class Proceso_productivo:
+class ProcesoProductivo:
     def __init__(self, pgraph: nx.DiGraph):
         """
         Inicializa un objeto Proceso_productivo con un grafo de producción.
