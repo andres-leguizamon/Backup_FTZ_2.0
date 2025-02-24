@@ -10,8 +10,10 @@ from dataclasses import dataclass , make_dataclass
 
 #------------------------ Economy Exchange of assets classes -----------------------------
 
+
 class Asset(ABC):
     """Clase abstracta para representar un activo."""
+    
     @abstractmethod
     def update_price(self, new_price: float):
         pass
@@ -19,24 +21,49 @@ class Asset(ABC):
     @abstractmethod
     def update_cost(self, new_cost: float):
         pass
+
+    @property
+    @abstractmethod
+    def cost(self) -> float:
+        """Deberá retornar el costo histórico (o el último costo) del activo."""
+        pass
+
+    @property
+    @abstractmethod
+    def price(self) -> float:
+        """Deberá retornar el precio actual del activo."""
+        pass
+
 
 class Good(Asset):
     """Clase que representa una unidad de bien con precio y costo histórico."""
+    
     def __init__(self, good_type: str, price: float = 0, last_cost: float = 0):
-        self.price = price
-        self.last_cost = last_cost
+        # Usamos atributos privados (convención con guion bajo)
+        self._price = price
+        self._cost = last_cost
         self.good_type = good_type  # Atributo público, sin property por ahora
 
+    @property
+    def price(self) -> float:
+        return self._price
+
+    @property
+    def cost(self) -> float:
+        return self._cost
+
     def update_price(self, new_price: float):
-        self.price = new_price
+        self._price = new_price
 
     def update_cost(self, new_cost: float):
-        self.last_cost = new_cost
+        self._cost = new_cost
 
     def __repr__(self):
-        return f"Good(Type: {self.good_type}, Price: {self.price}, Cost: {self.last_cost})"
+        return f"Good(Type: {self.good_type}, Price: {self.price}, Cost: {self.cost})"
+    
 
-# --- Estrategia de Gestión de Inventarios ---
+# --- --------------------------------------------------------Estrategias de Gestión de Inventarios --------------------------------------------------------
+
 class InventoryStrategy(ABC):
     """Interfaz para definir la estrategia de remoción de bienes en el inventario."""
     @abstractmethod
@@ -58,22 +85,19 @@ class LIFOInventoryStrategy(InventoryStrategy):
             return goods[-1]  # El último que llegó
         return None
 
-# --- Clase de Inventario ---
+# --- -----------------------------------------------------------------------------Inventory Class -------------------------------------------------------- ---
 class PhysicalInventory:
-    def __init__(self):
+    def __init__(self, inventory_strategy: InventoryStrategy):
         # Diccionario: clave = tipo de bien (str), valor = lista de Good
         self.inventory = defaultdict(list)
+        self.inventory_strategy = inventory_strategy
 
     def add_good(self, unit: Good):
         """Agrega una unidad al inventario."""
         self.inventory[unit.good_type].append(unit)
 
-    def remove_good(self, unit: Good):
-        """Remueve una unidad específica del inventario."""
-        if unit in self.inventory[unit.good_type]:
-            self.inventory[unit.good_type].remove(unit)
 
-    def select_good_by_strategy(self, good_type: str, strategy: InventoryStrategy) -> Optional[Good]:
+    def get_unit_by_strategy(self, good_type: str) -> Optional[Good]:
         """
         Remueve y retorna una unidad del inventario según la estrategia indicada.
         
@@ -85,9 +109,23 @@ class PhysicalInventory:
             Optional[Good]: La unidad removida o None si no hay unidades disponibles.
         """
         goods = self.inventory[good_type]
-        selected_good = strategy.select_good(goods)
+        selected_good = self.inventory_strategy.select_good(goods)
         if selected_good is not None:
             return selected_good
+        else:
+            raise ValueError("Not Enough Units of good Type"+" "+good_type)
+        
+    def remove_unit(self, unit: Good):
+        """Remueve una unidad específica del inventario."""
+        if unit in self.inventory[unit.good_type]:
+            self.inventory[unit.good_type].remove(unit)
+
+    def remove_unit_by_strategy(self, good_type: str):
+        unit = self.get_unit_by_strategy(good_type)
+        if unit is not None:
+            self.remove_unit(unit)
+        else:
+            raise ValueError("Not Enough Units of good Type"+" "+good_type)    
 
     def get_stock_quantity(self, good_type: str) -> List[Good]:
         """Devuelve la lista de unidades de un tipo de bien en el inventario."""
@@ -122,25 +160,57 @@ class Agent(ABC):
         def get_stock(self, good_type: str) -> List[Good]:
             pass
 
+        @abstractmethod
+        def get_unit_by_strategy(self, good_type: str) -> List[Good]:
+            pass
+
+        @abstractmethod
+        def remove_good_by_strategy(self, good_type: str) -> List[Good]:
+            pass
+        
+        @abstractmethod
+        def remove_unit(self, good_type: str) -> List[Good]:
+            pass
+        @abstractmethod
+        def add_good(self, good_type: str) -> List[Good]:
+            pass
+
+        @property 
+        def agent_complementary_info(self)->Dict:
+            pass 
+
+
 
 # --- Clase base para agentes económicos ---
 class EconomyAgent(Agent):
     """Clase para representar un agente económico con inventario."""
-    def __init__(self, name: str):
+    def __init__(self, name: str, inventory_strategy: InventoryStrategy, agent_complementary_info:Dict):
         self._name = name
-        self.inventory = PhysicalInventory()
+        self.inventory = PhysicalInventory(inventory_strategy)
+        self.agent_complementary_info = agent_complementary_info
 
     @property
     def name(self) -> str:
         return self._name
-
-
+    
+    #! TODO mejorar forma de hacer la información complementaria 
     def get_stock(self, good_type: str) -> List[Good]:
         return self.inventory.get_stock(good_type)
     
     def get_stock_quantity(self, good_type: str) -> List[Good]:
         return self.inventory.get_stock_quantity(good_type)
 
+    def get_unit_by_strategy(self, good_type: str) -> Optional[Good]:
+        return self.inventory.get_unit_by_strategy(good_type)
+    
+    def remove_unit_by_strategy(self, good_type: str):
+        self.inventory.remove_unit_by_strategy(good_type)
+
+    def remove_unit(self, unit:Good):
+        self.inventory.remove_unit(unit)
+    
+    def add_good(self, unit: Good):
+        self.inventory.add_good(unit)
 
 
 
@@ -375,24 +445,27 @@ class EconomyConfig:
     price_strategy: PriceLookupStrategy
     production_strategy: ProductionLookupStrategy
     agent_lookup_strategy: AgentLookupStrategy
-
-
-#--------------------- Specific Order Execution Strategies --------------------------------
-
+    order_interpretation_strategy: OrderInterpretationStrategy
 
 
 
-class OrderValiadationStrategy(ABC):
+#--------------------- ---------------------------Specific Order Execution Strategies --------------------------------
+
+#-------- Order validators to ensure effective economic transactions 
+
+
+
+
+class OrderValidationStrategy(ABC):
     @abstractmethod
     def validate_order(self, order:Order):
         pass
 
 
-class BuyOrderValidation(OrderValiadationStrategy):
+class BuyOrderValidation(OrderValidationStrategy):
     def __init__(self, config:EconomyConfig):
         super().__init__()
         self.config = config
-        self.info_generator = OrderAdditionalInfoGenerator(self.config.price_strategy, self.config.production_strategy)
         pass
 
     def get_agent(self, agent_name: str) -> Optional[Agent]:
@@ -405,12 +478,109 @@ class BuyOrderValidation(OrderValiadationStrategy):
         seller = self.get_agent(seller_name)
 
 
-        if seller.get_stock_quantity(order.good_type)
+        if seller.get_stock_quantity(order.good_type) == 0: # Verifica que haya suficiente inventario 
             raise ValueError ("No hay stock suficiente para la que el vendedor pueda vender")
 
         pass
 
 
+class ProductionOrderValidation(OrderValidationStrategy):
+    def __init__(self, config:EconomyConfig):
+        super().__init__()
+        self.config = config
+        pass
+
+    def get_agent(self, agent_name: str) -> Optional[Agent]:
+        return self.config.agent_lookup_strategy.get_agent(agent_name)
+    
+    def validate_order(self, order:Order):
+        producer_name = order.agents[0]
+        producer = self.get_agent(producer_name)
+
+        inputs = order.complementary_info["production_info"]["inputs"]
+        
+        for input in inputs:
+            if producer.get_stock_quantity(input) == 0: # Verifica que haya suficiente inventario 
+                raise ValueError ("No hay stock suficiente para la que el productor pueda producir")
+
+        pass
+
+
+
+    class OrderValidator:
+        def __init__(self, config:EconomyConfig):
+            self.config = config
+            self.buy_order_validation = BuyOrderValidation(self.config)
+            self.production_order_validation = ProductionOrderValidation(self.config)
+        
+        def generate_strategy_order_validation(self, order:Order):
+     
+            """
+            Returns the order validation strategy according to the type of order.
+        
+            Args:
+             order (Order): The order to get the validation strategy for.
+        
+             Returns:
+                OrderValidationStrategy: The order validation strategy.
+            """
+            if order.order_type == "comprar":
+                return self.buy_order_validation
+            elif order.order_type == "produccion":
+                return self.production_order_validation
+         
+
+        def validate_order(self, order:Order):
+            """
+            Validates the provided order using the appropriate validation strategy.
+
+            Args:
+                order (Order): The order to be validated.
+
+             Raises:
+                ValueError: If the order is not valid according to its type.
+            """
+
+            strategy = self.generate_strategy_order_validation(order)
+            strategy.validate_order(order)
+
+
+
+
+#----------------------------------------- Estrategia para tasar el costo inicial del bien 
+
+class CostStrategy(ABC):
+    """
+    Strategy interface that defines how to calculate the final cost of a good
+    produced from given inputs plus any additional overheads.
+    """
+    @abstractmethod
+    def calculate_cost(self, base_cost: float, extra_data: Dict[str, Any]) -> float:
+        """
+        Calculates a final cost based on the base cost and any additional factors.
+        
+        :param base_cost: Accumulated base cost from inputs.
+        :param extra_data: Dictionary of extra details that might affect cost.
+        :return: Final cost after applying the strategy's logic.
+        """
+        pass
+
+
+class SimpleAdditiveCostStrategy(CostStrategy):
+    """
+    A simple strategy that adds a flat overhead to the base cost.
+    """
+    def calculate_cost(self, base_cost: float, extra_data: Dict[str, Any]) -> float:
+        overhead = extra_data.get("overhead", 0.0)
+        return base_cost + overhead
+    
+
+class PlainInputCostStrategy(CostStrategy):
+    def calculate_cost(self, base_cost: float, extra_data: Dict[str, Any]=None) -> float:
+        return base_cost
+
+
+# ------------------------ Order Execution Strategies--------------------------------------
 
 class OrderExecutionStrategy(ABC):
     @abstractmethod
@@ -427,22 +597,62 @@ class OrderExecutionStrategy(ABC):
     pass
 
 
+
+
 class ProductionOrderExecution(OrderExecutionStrategy):
-    def __init__(self, config:EconomyConfig):
+    def __init__(self, config:EconomyConfig,cost_strategy:CostStrategy):
         super().__init__()
         self.config = config
+        self.cost_strategy = cost_strategy or PlainInputCostStrategy()
+       
 
-    def execute_order(order:Order):
+    def execute_order(self,order:Order):
+        cumulative_input_cost = 0
+        producer = self.config.agent_lookup_strategy.get_agent(order.agents[0])
+
+        for input in order.complementary_info["production_info"]["inputs"]:
+            unit = producer.get_unit_by_strategy(input)
+            cumulative_input_cost += unit.cost
+            producer.remove_unit(unit)
+        agent_complementary_info = producer.agent_complementary_info
+        cost = self.cost_strategy.calculate_cost(cumulative_input_cost,agent_complementary_info)
+        producer.add_good(Good(order.good_type,0,cost))
         pass
+        
 
 
 class BuyerOrderExecution(OrderExecutionStrategy):
-    def __init__(self, config:EconomyConfig):
+    def __init__(self, config:EconomyConfig,cost_strategy:CostStrategy):
         super().__init__()
         self.config = config
-    def execute_order(order:Order):
+        self.cost_strategy = cost_strategy or PlainInputCostStrategy()
+
+    def execute_order(self,order:Order):
+        buyer = self.config.agent_lookup_strategy.get_agent(order.agents[0])
+        seller = self.config.agent_lookup_strategy.get_agent(order.agents[1])
+
+        buyer_complementary_info = buyer.agent_complementary_info
+        seller_complementary_info = seller.agent_complementary_info
+
+        unit_sold = seller.get_unit_by_strategy(order.good_type)
+        price = order.complementary_info["price"]
+        
+        unit_sold.update_price(price)
+        #! TODO añadir aquí procesamiento contable del vendedor 
+        seller.remove_unit(unit_sold)
+        buyer.add_unit(unit_sold)
+
+        cost = self.cost_strategy.calculate_cost(unit_sold.cost,buyer_complementary_info)
+
+        unit_sold.update_cost(cost)
+
+        #! TODO añadir aqui procesamiento contable del comprador
+        
+
         pass
 
+
+#-------------------------------------- ---------------------------------------Order Executor -------------------------------------------------------------
 
 class OrderExecutor:
     def __init__(self, config:EconomyConfig):
@@ -451,5 +661,19 @@ class OrderExecutor:
     
     def generate_info(self, order: Order):
         self.info_generator.generate_info(order)
+
+    def generate_strategy_order_execution(self, order:Order):
+        if order.order_type == "comprar":
+            return BuyerOrderExecution(self.config)
+        elif order.order_type == "produccion":
+            return ProductionOrderExecution(self.config)
+        else:
+            raise ValueError(f"Unknown order_type: {order.order_type}")
+    
+    def execute_order(self,order:Order):
+        strategy = self.generate_strategy_order_execution(order)
+        strategy.execute_order(order)
+
+
 
 
