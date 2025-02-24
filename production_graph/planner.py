@@ -64,6 +64,9 @@ class ProcesoProductivo:
 
     def get_insumos(self, bien):
         return self._insumos_directos[bien]
+    
+    def get_productos(self, bien):
+        return self._productos_directos[bien]
 
     def get_clasificacion_bienes(self):
         return self._clasificacion_bienes
